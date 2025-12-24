@@ -1,115 +1,272 @@
-const display = document.getElementById("display");
+// =======================
+// DOM & STATE
+// =======================
 
+const display = document.getElementById("display");
 let currentValue = "0";
 
+
+// =======================
+// INPUT HANDLERS
+// =======================
+
+// Append digits to display
 function appendToDisplay(value) {
-    if (currentValue === "0") {
-        currentValue = value;
-    } else {
-        currentValue += value;
-    }
-    updateDisplay();
+  if (currentValue === "0") {
+    currentValue = value;
+  } else {
+    currentValue += value;
+  }
+  updateDisplay();
 }
 
-
+// Append operators (+ - * / %)
 function appendOperator(op) {
-    if (currentValue === "0") return;
 
-    if (/[+\-*/]$/.test(currentValue)) {
-        currentValue = currentValue.slice(0, -1) + op;
-    } else {
-        currentValue += op;
-    }
+  // Allow starting a negative number
+  if (currentValue === "0" && op === "-") {
+    currentValue = "-";
+    display.value = "-";
+    return;
+  }
 
-    display.value = currentValue; // raw
+  if (currentValue === "0") return;
+
+  // Replace last operator if already present
+  if (/[+\-*/%]$/.test(currentValue)) {
+    currentValue = currentValue.slice(0, -1) + op;
+  } else {
+    currentValue += op;
+  }
+
+  display.value = currentValue; // raw display
+}
+
+// Append decimal point to the current number only
+function appendDecimal() {
+  const parts = extractLastNumber(currentValue);
+  if (!parts) return;
+
+  let { before, number } = parts;
+
+  // Prevent multiple decimals in one number
+  if (number.includes(".")) return;
+
+  currentValue = before + number + ".";
+  updateDisplay();
 }
 
 
-function clearDisplay(){
+// =======================
+// EDITING CONTROLS
+// =======================
+
+// Clear everything
+function clearDisplay() {
+  currentValue = "0";
+  updateDisplay();
+}
+
+// Remove last character
+function backspace() {
+  if (currentValue.length <= 1 || currentValue === "-") {
     currentValue = "0";
-    updateDisplay();
+  } else {
+    currentValue = currentValue.slice(0, -1);
+  }
+  updateDisplay();
 }
 
-function backspace(){
-    if (currentValue.length <= 1 || currentValue === "-") {
-        currentValue = "0";
-    } else {
-        currentValue = currentValue.slice(0, -1);
-    }
-    updateDisplay();
-}
-
-
+// Toggle sign of the last number
 function toggleSign() {
-    // Do nothing for 0 or empty
-    if (currentValue === "0") return;
+  const match = currentValue.match(
+    /^(.*?)([+\-*/%])(\(?-?\d*\.?\d+\)?)$/
+  );
+  if (!match) return;
 
-    if (/[+\-*/]/.test(currentValue)) return; // block for now
+  let [, left, op, num] = match;
 
-    if (currentValue.startsWith("-")) {
-        currentValue = currentValue.slice(1);
+  const isWrapped = num.startsWith("(");
+  const cleanNum = num.replace(/[()]/g, "").replace("-", "");
+
+  // CASE 1: + and - operators (3-state iPhone logic)
+  if (op === "+" || op === "-") {
+    if (op === "-" && !isWrapped) {
+      // 4/9-5 → 4/9+5
+      currentValue = left + "+" + cleanNum;
+    } else if (op === "+" && !isWrapped) {
+      // 4/9+5 → 4/9+(-5)
+      currentValue = left + "+(-" + cleanNum + ")";
     } else {
-        currentValue = "-" + currentValue;
+      // 4/9+(-5) → 4/9+5
+      currentValue = left + "+" + cleanNum;
     }
-    updateDisplay();
+  }
+
+  // CASE 2: *, /, % (operand-only toggle)
+  else {
+    if (isWrapped) {
+      // 4.5%(-3.5) → 4.5%3.5
+      currentValue = left + op + cleanNum;
+    } else {
+      // 4.5%3.5 → 4.5%(-3.5)
+      currentValue = left + op + "(-" + cleanNum + ")";
+    }
+  }
+
+  updateDisplay();
 }
+
+
+
+
+// =======================
+// CALCULATION
+// =======================
 
 function calculateResult() {
-    try {
-        currentValue = eval(currentValue).toString();
-        updateDisplay();
-    } catch {
-        display.value = "Error";
-        currentValue = "0";
-    }
+  try {
+    const processed = resolvePercentages(currentValue);
+    const result = safeEvaluate(processed);
+
+    if (!isFinite(result)) throw new Error();
+
+    currentValue = result.toString();
+    updateDisplay();
+  } catch {
+    display.value = "Error";
+    currentValue = "0";
+  }
 }
 
 
-function appendDecimal() {
-    if (!currentValue.includes(".")) {
-        currentValue += ".";
-        display.value = currentValue;
-    }
-}
+// =======================
+// DISPLAY & FORMATTING
+// =======================
 
 function updateDisplay() {
 
-    // If expression or operator, show raw
-    if (/[+\-*/]/.test(currentValue.slice(1))) {
-        display.value = currentValue;
-        display.scrollLeft = display.scrollWidth;
-        return;
-    }
+  // Split expression by last operator
+  const parts = splitByLastOperator(currentValue);
 
-    if (currentValue.includes(".")) {
-        const [intPart, decPart] = currentValue.split(".");
-        display.value =
-            formatIndianNumberString(intPart) + "." + decPart;
-    } else {
-        display.value =
-            formatIndianNumberString(currentValue);
-    }
+  // Expression exists (e.g. 12+345)
+  if (parts) {
+    const { left, operator, right } = parts;
 
+    // Format only the last number
+    let formattedRight = right.includes(".")
+      ? formatIndianNumberString(right.split(".")[0]) + "." + right.split(".")[1]
+      : formatIndianNumberString(right);
+
+    display.value = left + operator + formattedRight;
     display.scrollLeft = display.scrollWidth;
+    return;
+  }
+
+  // Pure number formatting
+  if (currentValue.includes(".")) {
+    const [intPart, decPart] = currentValue.split(".");
+    display.value = formatIndianNumberString(intPart) + "." + decPart;
+  } else {
+    display.value = formatIndianNumberString(currentValue);
+  }
+
+  display.scrollLeft = display.scrollWidth;
 }
 
-
+// Indian number system formatting (e.g. 12,34,567)
 function formatIndianNumberString(numStr) {
-    let sign = "";
-    if (numStr.startsWith("-")) {
-        sign = "-";
-        numStr = numStr.slice(1);
-    }
+  let sign = "";
 
-    if (numStr.length <= 3) return sign + numStr;
+  if (numStr.startsWith("-")) {
+    sign = "-";
+    numStr = numStr.slice(1);
+  }
 
-    const last3 = numStr.slice(-3);
-    const rest = numStr.slice(0, -3);
+  if (numStr.length <= 3) return sign + numStr;
 
-    const formatted =
-        rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
+  const last3 = numStr.slice(-3);
+  const rest = numStr.slice(0, -3);
 
-    return sign + formatted;
+  const formatted =
+    rest.replace(/\B(?=(\d{2})+(?!\d))/g, ",") + "," + last3;
+
+  return sign + formatted;
 }
 
 
+// =======================
+// HELPERS (REGEX PARSING)
+// =======================
+
+function resolvePercentages(expr) {
+  // Only convert % when it is NOT followed by a number (unary %)
+  return expr.replace(/(\d*\.?\d+)%(\D|$)/g, (_, n, tail) => {
+    return String(Number(n) / 100) + tail;
+  });
+}
+
+
+
+// Safe alternative to eval() — evaluates math only
+function safeEvaluate(expr) {
+  const tokens = expr.match(/-?\d*\.?\d+|[+\-*/%]/g);
+  if (!tokens) return 0;
+
+  const values = [];
+  const ops = [];
+
+  const prec = { "+": 1, "-": 1, "*": 2, "/": 2, "%": 2 };
+
+  function applyOp() {
+    const b = values.pop();
+    const a = values.pop();
+    const op = ops.pop();
+
+    switch (op) {
+      case "+": values.push(a + b); break;
+      case "-": values.push(a - b); break;
+      case "*": values.push(a * b); break;
+      case "/": values.push(b === 0 ? Infinity : a / b); break;
+      case "%": values.push(b === 0 ? Infinity : a - Math.floor(a / b) * b); break;
+    }
+  }
+
+  for (let token of tokens) {
+    if (!isNaN(token)) {
+      values.push(parseFloat(token));
+    } else {
+      while (ops.length && prec[ops.at(-1)] >= prec[token]) {
+        applyOp();
+      }
+      ops.push(token);
+    }
+  }
+
+  while (ops.length) applyOp();
+  return values[0];
+}
+
+
+// Split expression into left, operator, right (last operator only)
+function splitByLastOperator(expr) {
+  const match = expr.match(/^(.*?)([+\-*/%])([^+\-*/%]*)$/);
+  if (!match) return null;
+
+  return {
+    left: match[1],
+    operator: match[2],
+    right: match[3],
+  };
+}
+
+// Extract last number from expression
+function extractLastNumber(expr) {
+  const match = expr.match(/^(.*?)(-?\d*\.?\d+)$/);
+  if (!match) return null;
+
+  return {
+    before: match[1],
+    number: match[2],
+  };
+}
