@@ -127,7 +127,7 @@ function toggleSign() {
 function calculateResult() {
   try {
     const processed = resolvePercentages(currentValue);
-    const result = safeEvaluate(processed);
+    const result = eval(processed);
 
     if (!isFinite(result)) throw new Error();
 
@@ -204,47 +204,6 @@ function resolvePercentages(expr) {
   return expr.replace(/(\d*\.?\d+)%(\D|$)/g, (_, n, tail) => {
     return String(Number(n) / 100) + tail;
   });
-}
-
-
-
-// Safe alternative to eval() — evaluates math only
-function safeEvaluate(expr) {
-  const tokens = expr.match(/-?\d*\.?\d+|[+\-*/%]/g);
-  if (!tokens) return 0;
-
-  const values = [];
-  const ops = [];
-
-  const prec = { "+": 1, "-": 1, "*": 2, "/": 2, "%": 2 };
-
-  function applyOp() {
-    const b = values.pop();
-    const a = values.pop();
-    const op = ops.pop();
-
-    switch (op) {
-      case "+": values.push(a + b); break;
-      case "-": values.push(a - b); break;
-      case "*": values.push(a * b); break;
-      case "/": values.push(b === 0 ? Infinity : a / b); break;
-      case "%": values.push(b === 0 ? Infinity : a - Math.floor(a / b) * b); break;
-    }
-  }
-
-  for (let token of tokens) {
-    if (!isNaN(token)) {
-      values.push(parseFloat(token));
-    } else {
-      while (ops.length && prec[ops.at(-1)] >= prec[token]) {
-        applyOp();
-      }
-      ops.push(token);
-    }
-  }
-
-  while (ops.length) applyOp();
-  return values[0];
 }
 
 
